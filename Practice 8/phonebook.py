@@ -1,76 +1,61 @@
-CREATE OR REPLACE FUNCTION search_phonebook(pattern TEXT)
-RETURNS TABLE(id INT, name TEXT, surname TEXT, phone TEXT) AS $$
-BEGIN
-    RETURN QUERY
-    SELECT id, name, surname, phone
-    FROM phonebook
-    WHERE name ILIKE '%' || pattern || '%'
-       OR surname ILIKE '%' || pattern || '%'
-       OR phone ILIKE '%' || pattern || '%';
-END;
-$$ LANGUAGE plpgsql;
+import os
+from connect import get_connection
 
-CREATE OR REPLACE PROCEDURE upsert_user(p_name TEXT, p_surname TEXT, p_phone TEXT)
-LANGUAGE plpgsql AS $$
-BEGIN
-    IF EXISTS (SELECT 1 FROM phonebook WHERE name = p_name AND surname = p_surname) THEN
-        UPDATE phonebook
-        SET phone = p_phone
-        WHERE name = p_name AND surname = p_surname;
-    ELSE
-        INSERT INTO phonebook(name, surname, phone)
-        VALUES (p_name, p_surname, p_phone);
-    END IF;
-END;
-$$;
+def run_search():
+    pattern = input("Enter search term: ")
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM search_contacts(%s)", (pattern,))
+            for row in cur.fetchall():
+                print(row)
 
-CREATE OR REPLACE PROCEDURE insert_many_users(users JSON)
-LANGUAGE plpgsql AS $$
-DECLARE
-    rec JSON;
-    u_name TEXT;
-    u_surname TEXT;
-    u_phone TEXT;
-    invalid_data JSON := '[]'::JSON;
-BEGIN
-    FOR rec IN SELECT * FROM json_array_elements(users)
-    LOOP
-        u_name := rec->>'name';
-        u_surname := rec->>'surname';
-        u_phone := rec->>'phone';
+def run_upsert():
+    fname = input("First Name: ")
+    lname = input("Last Name: ")
+    phone = input("Phone: ")
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("CALL upsert_contact(%s, %s, %s)", (fname, lname, phone))
+        conn.commit()
+    print("Upsert successful.")
 
-        IF u_phone ~ '^[0-9]+$' AND length(u_phone) >= 5 THEN
-            CALL upsert_user(u_name, u_surname, u_phone);
-        ELSE
-            invalid_data := invalid_data || json_build_array(rec);
-        END IF;
-    END LOOP;
+def run_bulk_insert():
+    # Example lists (In a real app, these would come from a file or multi-input)
+    names = ['John', 'Jane', 'BadNum']
+    surnames = ['Doe', 'Smith', 'Error']
+    phones = ['1234567', '9876543', '123'] # '123' is too short, will fail
+    
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            # We pass an empty array for the INOUT parameter
+            cur.execute("CALL bulk_insert_contacts(%s, %s, %s, %s)", (names, surnames, phones, []))
+            failed = cur.fetchone()[0]
+            print(f"Bulk insert finished. Failed items: {failed}")
+        conn.commit()
 
-    RAISE NOTICE 'Некорректные данные: %', invalid_data;
-END;
-$$;
+def run_pagination():
+    limit = int(input("How many records per page? "))
+    offset = int(input("How many records to skip (offset)? "))
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM get_contacts_paginated(%s, %s)", (limit, offset))
+            for row in cur.fetchall():
+                print(row)
 
+def run_delete():
+    target = input("Enter name or phone to delete: ")
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("CALL delete_contact_proc(%s)", (target,))
+        conn.commit()
+    print("Delete procedure called.")
 
-CREATE OR REPLACE FUNCTION get_phonebook_page(limit_rows INT, offset_rows INT)
-RETURNS TABLE(id INT, name TEXT, surname TEXT, phone TEXT) AS $$
-BEGIN
-    RETURN QUERY
-    SELECT id, name, surname, phone
-    FROM phonebook
-    ORDER BY id
-    LIMIT limit_rows OFFSET offset_rows;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE OR REPLACE PROCEDURE delete_user(p_name TEXT DEFAULT NULL, p_phone TEXT DEFAULT NULL)
-LANGUAGE plpgsql AS $$
-BEGIN
-    IF p_name IS NOT NULL THEN
-        DELETE FROM phonebook WHERE name = p_name;
-    ELSIF p_phone IS NOT NULL THEN
-        DELETE FROM phonebook WHERE phone = p_phone;
-    ELSE
-        RAISE NOTICE 'Name, phone number';
-    END IF;
-END;
-$$;
+if name == "__main__":
+    # Simple menu to test the new procedures
+    print("1. Search | 2. Upsert | 3. Bulk Insert | 4. Paginate | 5. Delete")
+    choice = input("Select: ")
+    if choice == '1': run_search()
+    elif choice == '2': run_upsert()
+    elif choice == '3': run_bulk_insert()
+    elif choice == '4': run_pagination()
+    elif choice == '5': run_delete()
