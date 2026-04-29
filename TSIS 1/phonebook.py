@@ -1,5 +1,5 @@
 # phonebook.py
-import psycopg2
+import psycopg
 import csv
 import json
 import sys
@@ -14,7 +14,7 @@ DB_CONFIG = {
 }
 
 def get_db_connection():
-    return psycopg2.connect(**DB_CONFIG)
+    return psycopg.connect(**DB_CONFIG)
 
 def execute_sql_file(filename):
     """Utility to run schema.sql and procedures.sql"""
